@@ -41,6 +41,7 @@ IconRulerMeasure,
     IconListDetails,
     IconBrandWhatsapp,
     IconToolsKitchen2,
+    IconPrinter,
 } from "@tabler/icons-react";
 import hasAnyPermission from "./Permission";
 import React from "react";
@@ -437,6 +438,13 @@ export default function Menu() {
                     active: url === "/dashboard/settings/whatsapp",
                     icon: <IconBrandWhatsapp size={20} strokeWidth={1.5} />,
                     permissions: hasAnyPermission(["whatsapp-settings-access"]),
+                },
+                {
+                    title: t("sidebar.items.printers"),
+                    href: route("settings.printer"),
+                    active: url === "/dashboard/settings/printer",
+                    icon: <IconPrinter size={20} strokeWidth={1.5} />,
+                    permissions: hasAnyPermission(["dashboard-access"]),
                 },
             ],
         },

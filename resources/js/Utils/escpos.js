@@ -1,5 +1,5 @@
-// ponytail: raw ESC/POS byte generator — no heavy lib, 58mm/80mm + cutter + drawer kick
-// Upgrade path: image/logo support, codepage mapping if store sells non-ASCII heavy.
+// ESC/POS receipt generator + browser-side transport adapters.
+// LAN printers are handled server-side by Laravel through registered printer IDs.
 
 const ESC = 0x1b;
 const GS = 0x1d;
@@ -73,6 +73,10 @@ function buildReceiptBytes(data, paperSize = "80mm") {
 function drawerKickBytes(pin = 2) {
     // ESC p m t1 t2 — kick drawer pin 2, ~50ms pulse
     return new Uint8Array([ESC, 0x70, pin === 5 ? 0x01 : 0x00, 0x19, 0xfa]);
+}
+
+function selectedPaperSize(printer, fallback = "80mm") {
+    return printer?.paper_size || printer?.paperSize || fallback;
 }
 
 export async function requestPrinter() {
@@ -152,8 +156,185 @@ export async function printBytes(bytes) {
     }
 }
 
-export async function printReceipt(data, paperSize) {
-    await printBytes(buildReceiptBytes(data, paperSize));
+class BasePrinter {
+    constructor(config = {}) {
+        this.config = config;
+    }
+
+    async printReceipt(data, paperSize) {
+        return this.printBytes(buildReceiptBytes(data, paperSize));
+    }
+
+    async testConnection() {
+        throw new Error("Test koneksi belum tersedia untuk tipe printer ini.");
+    }
+
+    async printBytes() {
+        throw new Error("Printer belum mendukung pengiriman ESC/POS.");
+    }
+}
+
+export class UsbPrinter extends BasePrinter {
+    async request() {
+        return requestPrinter();
+    }
+
+    async testConnection() {
+        await this.request();
+        await this.printReceipt(testReceiptData(), selectedPaperSize(this.config));
+    }
+
+    async printBytes(bytes) {
+        return printBytes(bytes);
+    }
+}
+
+export class LanPrinter extends BasePrinter {
+    async testConnection() {
+        try {
+            await window.axios.post(route("settings.printer.test", this.config.id));
+        } catch (error) {
+            throw new Error(error.response?.data?.message || "Test printer LAN gagal.");
+        }
+    }
+
+    async printReceipt(_data, _paperSize, options = {}) {
+        if (!options.invoice) {
+            throw new Error("Invoice transaksi wajib tersedia untuk print LAN via Laravel.");
+        }
+
+        try {
+            await window.axios.post(route("transactions.print.thermal", options.invoice), {
+                printer_id: this.config.id,
+            });
+        } catch (error) {
+            throw new Error(error.response?.data?.message || "Gagal mengirim struk ke printer LAN.");
+        }
+    }
+}
+
+export class BluetoothPrinter extends BasePrinter {
+    async getCharacteristic() {
+        if (!navigator.bluetooth) {
+            throw new Error("Web Bluetooth tidak didukung browser ini.");
+        }
+
+        const serviceUuid = String(this.config.config?.service_uuid || "").trim();
+        const characteristicUuid = String(this.config.config?.characteristic_uuid || "").trim();
+        if (!serviceUuid || !characteristicUuid) {
+            throw new Error("Web Bluetooth hanya bisa dipakai untuk printer BLE/GATT yang punya service UUID dan characteristic UUID.");
+        }
+
+        if (!BluetoothPrinter.cached) {
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ services: [serviceUuid] }],
+                optionalServices: [serviceUuid],
+            });
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService(serviceUuid);
+            BluetoothPrinter.cached = await service.getCharacteristic(characteristicUuid);
+        }
+
+        return BluetoothPrinter.cached;
+    }
+
+    async testConnection() {
+        await this.printReceipt(testReceiptData(), selectedPaperSize(this.config));
+    }
+
+    async printBytes(bytes) {
+        const characteristic = await this.getCharacteristic();
+        const chunkSize = 180;
+        for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+            await characteristic.writeValue(bytes.slice(offset, offset + chunkSize));
+        }
+    }
+}
+
+export class SystemPrinter extends BasePrinter {
+    async testConnection(options = {}) {
+        if (options.systemPrint) {
+            options.systemPrint();
+            return;
+        }
+        window.print();
+    }
+
+    async printReceipt(_data, _paperSize, options = {}) {
+        if (options.systemPrint) {
+            return options.systemPrint();
+        }
+        window.print();
+    }
+}
+
+export class PrinterManager {
+    constructor(printers = [], defaultPrinterId = null) {
+        this.printers = printers;
+        this.defaultPrinterId = defaultPrinterId;
+    }
+
+    selected(printer = null) {
+        return printer || this.printers.find((item) => item.id === this.defaultPrinterId) || this.printers[0] || null;
+    }
+
+    adapter(printer = null) {
+        const selected = this.selected(printer);
+        if (!selected) {
+            throw new Error("Belum ada printer yang dipilih.");
+        }
+
+        if (selected.type === "usb") return new UsbPrinter(selected);
+        if (selected.type === "lan" || selected.type === "network") return new LanPrinter(selected);
+        if (selected.type === "bluetooth_ble" || selected.type === "bluetooth") return new BluetoothPrinter(selected);
+
+        return new SystemPrinter(selected);
+    }
+
+    async request(printer = null) {
+        const adapter = this.adapter(printer);
+        if (adapter.request) return adapter.request();
+        return adapter.testConnection();
+    }
+
+    async testConnection(printer = null, options = {}) {
+        return this.adapter(printer).testConnection(options);
+    }
+
+    async printReceipt(data, printer = null, options = {}) {
+        const selected = this.selected(printer);
+        return this.adapter(selected).printReceipt(data, selectedPaperSize(selected), options);
+    }
+}
+
+function testReceiptData() {
+    return {
+        store_name: "TEST PRINT",
+        invoice: "TEST-001",
+        created_at: new Date().toLocaleString("id-ID"),
+        items: [{ qty: 1, name: "Produk Uji Cetak", price: 1000 }],
+        money: (v) => `Rp${Number(v || 0).toLocaleString("id-ID")}`,
+        subtotal: 1000,
+        discount_total: 0,
+        tax_total: 0,
+        shipping_cost: 0,
+        grand_total: 1000,
+        payment_method_label: "Tunai",
+        cash_received: 1000,
+        change: 0,
+    };
+}
+
+export async function printReceipt(data, paperSizeOrPrinter = "80mm", printer = null) {
+    if (typeof paperSizeOrPrinter === "object" && paperSizeOrPrinter !== null) {
+        return new PrinterManager([paperSizeOrPrinter], paperSizeOrPrinter.id).printReceipt(data, paperSizeOrPrinter);
+    }
+
+    if (printer) {
+        return new PrinterManager([printer], printer.id).printReceipt(data, printer);
+    }
+
+    await printBytes(buildReceiptBytes(data, paperSizeOrPrinter));
 }
 
 export async function kickDrawer() {
@@ -174,4 +355,13 @@ export function hasCachedPrinter() {
     return Boolean(getPrinter.cached?.opened);
 }
 
-export { buildReceiptBytes, drawerKickBytes };
+export function canAutoPrint(printer) {
+    if (!printer) return hasCachedPrinter();
+    if (printer.type === "lan" || printer.type === "network") return true;
+    if (printer.type === "usb") return hasCachedPrinter();
+    if (printer.type === "bluetooth_ble" || printer.type === "bluetooth") return Boolean(BluetoothPrinter.cached);
+
+    return false;
+}
+
+export { buildReceiptBytes, drawerKickBytes, testReceiptData };

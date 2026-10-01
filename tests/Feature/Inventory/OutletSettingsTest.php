@@ -7,6 +7,7 @@ use App\Models\Setting;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Warehouse;
+use App\Services\PrinterSettingsService;
 use App\Services\ThermalPrintService;
 use App\Services\WhatsAppService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -97,5 +98,43 @@ class OutletSettingsTest extends TestCase
 
         $this->assertSame('100000', Setting::getForOutlet('monthly_sales_target', $outletB));
         $this->assertSame('https://global-wa.test', Setting::getForOutlet('wa_service_url', $outletB));
+    }
+
+    public function test_printer_settings_support_multiple_printer_profiles_per_outlet(): void
+    {
+        $outlet = Outlet::create(['code' => 'MAL', 'name' => 'Malabar']);
+
+        app(PrinterSettingsService::class)->persist($outlet, [
+            'printer_auto_print' => true,
+            'printer_paper_size' => '80mm',
+            'printer_default_id' => 'lan-kasir',
+            'printers' => [
+                [
+                    'id' => 'usb-kasir',
+                    'name' => 'USB Kasir',
+                    'type' => 'usb',
+                    'paper_size' => '58mm',
+                    'config' => [],
+                ],
+                [
+                    'id' => 'lan-kasir',
+                    'name' => 'LAN Kasir',
+                    'type' => 'lan',
+                    'paper_size' => '80mm',
+                    'host' => '192.168.1.50',
+                    'port' => 9100,
+                    'timeout_ms' => 5000,
+                    'is_active' => true,
+                ],
+            ],
+        ]);
+
+        $payload = app(PrinterSettingsService::class)->payload($outlet);
+
+        $this->assertTrue($payload['autoPrint']);
+        $this->assertSame('lan-kasir', $payload['defaultPrinterId']);
+        $this->assertSame('lan', $payload['defaultPrinter']['type']);
+        $this->assertSame(9100, $payload['defaultPrinter']['port']);
+        $this->assertCount(2, $payload['printers']);
     }
 }

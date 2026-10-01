@@ -304,7 +304,8 @@
             "priceLists": "Price Lists",
             "warehouses": "Warehouses / Branches",
             "units": "Units",
-            "whatsApp": "WhatsApp"
+            "whatsApp": "WhatsApp",
+            "printers": "Printers"
         },
         "menu": {
             "overview": "Overview",

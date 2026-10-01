@@ -17,12 +17,16 @@ import ThermalReceipt, {
 } from "@/Components/Receipt/ThermalReceipt";
 import ShippingLabel from "@/Components/Receipt/ShippingLabel";
 import { useAuthorization } from "@/Utils/authorization";
-import { hasCachedPrinter, kickDrawer, printReceipt } from "@/Utils/escpos";
+import { canAutoPrint, kickDrawer, PrinterManager } from "@/Utils/escpos";
 import toast from "react-hot-toast";
 
 export default function Print({ transaction }) {
     const { storeProfile, printerSettings } = usePage().props;
     const { can } = useAuthorization();
+    const printerManager = useMemo(
+        () => new PrinterManager(printerSettings?.printers || [], printerSettings?.defaultPrinterId),
+        [printerSettings?.printers, printerSettings?.defaultPrinterId]
+    );
     const [printMode, setPrintMode] = useState("invoice"); // 'invoice' | 'thermal80' | 'thermal58'
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [isConfirming, setIsConfirming] = useState(false);
@@ -236,14 +240,21 @@ export default function Print({ transaction }) {
     };
 
     const handleThermalPrint = async () => {
-        const paperSize = printMode === "thermal58" ? "58mm" : "80mm";
+        const selectedPrinter = printerSettings?.defaultPrinter
+            ? { ...printerSettings.defaultPrinter, paper_size: printMode === "thermal58" ? "58mm" : "80mm" }
+            : null;
         const fallbackWindow = window.open("", "_blank", "width=400,height=600");
 
         try {
-            await printReceipt(receiptData, paperSize);
-            fallbackWindow?.close();
-            toast.success("Struk tercetak langsung ke printer thermal.");
-            if (!isNonCash) {
+            await printerManager.printReceipt(receiptData, selectedPrinter, {
+                invoice: transaction.invoice,
+                systemPrint: () => openThermalFallback(fallbackWindow),
+            });
+            if (selectedPrinter?.type !== "system") {
+                fallbackWindow?.close();
+            }
+            toast.success("Struk terkirim ke printer.");
+            if (!isNonCash && selectedPrinter?.type === "usb") {
                 await kickDrawer().catch((error) => {
                     toast.error(`Struk tercetak, tetapi laci gagal dibuka: ${error.message}`);
                 });
@@ -261,14 +272,16 @@ export default function Print({ transaction }) {
     // Auto-print uses ESC/POS only; fallback must stay user-triggered to avoid surprise dialogs.
     useEffect(() => {
         if (!printerSettings?.autoPrint) return;
-        if (!hasCachedPrinter()) return;
+        if (!canAutoPrint(printerSettings?.defaultPrinter)) return;
         if (!transaction?.details?.length) return;
         if (showQris) return; // wait for payment confirmation first
         (async () => {
             try {
-                await printReceipt(receiptData, printerSettings.paperSize);
+                await printerManager.printReceipt(receiptData, printerSettings.defaultPrinter, {
+                    invoice: transaction.invoice,
+                });
                 toast.success("Struk tercetak otomatis.");
-                if (!isNonCash) {
+                if (!isNonCash && printerSettings?.defaultPrinter?.type === "usb") {
                     await kickDrawer().catch((error) => {
                         toast.error(`Struk tercetak, tetapi laci gagal dibuka: ${error.message}`);
                     });

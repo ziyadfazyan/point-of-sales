@@ -305,7 +305,8 @@
             "warehouses": "Gudang / Cabang",
             "outlets": "Outlet",
             "units": "Satuan",
-            "whatsApp": "WhatsApp"
+            "whatsApp": "WhatsApp",
+            "printers": "Printer"
         },
         "menu": {
             "overview": "Overview",

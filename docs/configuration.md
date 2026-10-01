@@ -74,9 +74,12 @@ Konfigurasi di `dashboard/settings/store` — bagian "Informasi Pajak & Legal":
 
 Konfigurasi di `dashboard/settings/printer`:
 
-- **Ukuran Kertas** — 80mm atau 58mm
-- **Auto-print** — cetak receipt otomatis setelah transaksi (via WebUSB)
-- Thermal printer terhubung via WebUSB (browser Chrome/Edge)
+- **Daftar printer** — tambah/edit/hapus printer USB, LAN, Bluetooth BLE, atau system printer
+- **Printer default** — dipakai oleh tombol Thermal dan auto-print
+- **Ukuran kertas** — 80mm atau 58mm per printer
+- **Network printer** — isi IP/hostname, port TCP (default ESC/POS `9100`), dan timeout; Laravel server harus bisa menjangkau IP printer
+- **Auto-print** — cetak receipt otomatis setelah transaksi jika printer default bisa dipakai tanpa dialog browser
+- **Fallback system printer** — memakai dialog print OS/browser saat raw ESC/POS tidak tersedia
 
 ## Store Profile
 

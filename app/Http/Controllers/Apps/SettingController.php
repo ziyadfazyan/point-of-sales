@@ -7,9 +7,11 @@ use App\Models\Setting;
 use App\Services\AuditLogService;
 use App\Services\LoyaltyService;
 use App\Services\OutletAccessService;
+use App\Services\PrinterSettingsService;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Validator;
 use Inertia\Inertia;
 
 class SettingController extends Controller
@@ -18,7 +20,8 @@ class SettingController extends Controller
         private readonly AuditLogService $auditLogService,
         private readonly LoyaltyService $loyaltyService,
         private readonly WhatsAppService $whatsAppService,
-        private readonly OutletAccessService $outletAccessService
+        private readonly OutletAccessService $outletAccessService,
+        private readonly PrinterSettingsService $printerSettingsService
     ) {}
 
     /**
@@ -157,10 +160,7 @@ class SettingController extends Controller
         $outlet = $this->outletAccessService->activeOutlet(request());
 
         return Inertia::render('Dashboard/Settings/Printer', [
-            'settings' => [
-                'printer_auto_print' => Setting::getBoolForOutlet('printer_auto_print', $outlet, false),
-                'printer_paper_size' => Setting::getForOutlet('printer_paper_size', $outlet, '80mm'),
-            ],
+            'settings' => $this->printerSettingsService->payload($outlet),
         ]);
     }
 
@@ -170,10 +170,34 @@ class SettingController extends Controller
         $validated = $request->validate([
             'printer_auto_print' => ['boolean'],
             'printer_paper_size' => ['required', 'in:80mm,58mm'],
+            'printer_default_id' => ['nullable', 'string', 'max:80'],
+            'printers' => ['array'],
+            'printers.*.id' => ['nullable', 'string', 'max:80'],
+            'printers.*.name' => ['required', 'string', 'max:80'],
+            'printers.*.type' => ['required', 'in:lan,usb,bluetooth_ble,system,network,bluetooth'],
+            'printers.*.is_active' => ['boolean'],
+            'printers.*.paper_size' => ['required', 'in:80mm,58mm'],
+            'printers.*.config' => ['array'],
+            'printers.*.host' => ['nullable', 'string', 'max:255'],
+            'printers.*.port' => ['nullable', 'integer', 'min:1', 'max:65535'],
+            'printers.*.timeout_ms' => ['nullable', 'integer', 'min:500', 'max:30000'],
+            'printers.*.config.service_uuid' => ['nullable', 'string', 'max:120'],
+            'printers.*.config.characteristic_uuid' => ['nullable', 'string', 'max:120'],
         ]);
 
-        Setting::setForOutlet('printer_auto_print', $validated['printer_auto_print'] ? '1' : '0', $outlet, 'Auto-print receipt setelah transaksi');
-        Setting::setForOutlet('printer_paper_size', $validated['printer_paper_size'], $outlet, 'Ukuran kertas printer thermal');
+        validator($validated, [])->after(function (Validator $validator) use ($validated) {
+            foreach ($validated['printers'] ?? [] as $index => $printer) {
+                if (! in_array($printer['type'] ?? null, ['lan', 'network'], true)) {
+                    continue;
+                }
+
+                if (trim((string) ($printer['host'] ?? data_get($printer, 'config.host', ''))) === '') {
+                    $validator->errors()->add("printers.{$index}.config.host", 'IP atau hostname printer LAN wajib diisi.');
+                }
+            }
+        })->validate();
+
+        $this->printerSettingsService->persist($outlet, $validated);
 
         return back()->with('success', 'Pengaturan printer disimpan.');
     }

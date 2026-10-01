@@ -14,6 +14,7 @@ use App\Models\Transaction;
 use App\Services\CashierShiftService;
 use App\Services\OutletAccessService;
 use App\Services\PayableAgingService;
+use App\Services\PrinterSettingsService;
 use App\Services\ReceivableService;
 use App\Support\ProductionSecurityBaseline;
 use Illuminate\Http\Request;
@@ -239,10 +240,7 @@ class HandleInertiaRequests extends Middleware
                 'city' => Setting::getForOutlet('store_city', $outlet, ''),
             ];
 
-            $printerSettings = [
-                'autoPrint' => Setting::getBoolForOutlet('printer_auto_print', $outlet, false),
-                'paperSize' => Setting::getForOutlet('printer_paper_size', $outlet, '80mm'),
-            ];
+            $printerSettings = app(PrinterSettingsService::class)->payload($outlet);
         } else {
             $printerSettings = [
                 'autoPrint' => false,
